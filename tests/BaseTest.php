@@ -28,16 +28,19 @@
 			Config::loadFiles('tests/config');
 			DB::execute('truncate model_base');
 			$data = [
-				['title' => 'hdcms'],
-				['title' => 'hdphp'],
-				['title' => 'houdunwang'],
+				['title' => 'pfinal'],
+				['title' => 'pfinal-cms'],
+				['title' => 'pfphp'],
 			];
 			foreach ($data as $d) {
 				DB::table('model_base')->insert($d);
 			}
 		}
 		
-		public function getTest()
+		/**
+		 * @test
+		 */
+		public function get()
 		{
 			$model = ModelBase::where('id', 1)->first();
 			$this->assertEquals('hdcms', $model['title']);
