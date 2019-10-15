@@ -18,15 +18,18 @@
 	namespace pf\model;
 	
 	use ArrayAccess;
+	use Carbon\Carbon;
 	use Iterator;
+	use pf\collection\Collection;
 	use pf\db\DB;
 	use pf\db\Query;
 	use pf\model\build\ArrayIterator;
+	use pf\model\build\Auto;
 	use pf\model\build\Relation;
 	
 	class Model implements ArrayAccess, Iterator
 	{
-		use ArrayIterator, Relation;
+		use ArrayIterator, Relation,Auto;
 		
 		# use Validate, Auto, Filter;
 		
@@ -95,7 +98,7 @@
 		
 		public function __construct()
 		{
-			if ($this->table) {
+			if (!$this->table) {
 				$this->init();
 			}
 		}
@@ -103,12 +106,13 @@
 		protected function init()
 		{
 			$this->setTable($this->table);
-			$this->setDb(DB::table($this->table));
+			$this->setDB(DB::table($this->table));
 			$this->db->setModel($this);
 			$this->setPk($this->db->getPrimaryKey());
 			
 			return $this;
 		}
+		
 		
 		/**
 		 * 设置表名
@@ -132,6 +136,24 @@
 		}
 		
 		/**
+		 * @param $db
+		 */
+		public function setDB($db)
+		{
+			$this->db = $db;
+		}
+		
+		public function setPk($pk)
+		{
+			$this->pk = $pk;
+		}
+		
+		public function getPk($pk)
+		{
+			return $this->pk;
+		}
+		
+		/**
 		 * @param $method
 		 * @param $params
 		 * @return mixed
@@ -145,7 +167,9 @@
 		
 		public static function __callStatic($method, $params)
 		{
-			return call_user_func_array([new static(), $method], $params);
+			$obj = new static();
+			
+			return call_user_func_array([$obj, $method], $params);
 		}
 		
 		public function returnParse($method, $result)
@@ -175,6 +199,197 @@
 							return $this;
 						}
 				}
+			}
+		}
+		
+		public function setData(array $data)
+		{
+			
+			$this->data = array_merge($this->data, $data);
+			$this->fields = $this->data;
+			$this->getFormatAttribute();
+			
+			return $this;
+		}
+		
+		public function getData()
+		{
+			return $this->data;
+		}
+		
+		public function getFormatAttribute()
+		{
+			foreach ($this->fields as $name => $val) {
+				$n = preg_replace_callback(
+					'/_([a-z]+)/',
+					function ($v) {
+						return strtoupper($v[1]);
+					},
+					$name
+				);
+				$method = "get".ucfirst($n)."AtAttribute";
+				if (method_exists($this, $method)) {
+					$this->fields[$name] = $this->$method($val);
+				}
+			}
+			
+			return $this->fields;
+		}
+		
+		public function toArray()
+		{
+			$data = $this->fields;
+			foreach ($data as $k => $v) {
+				if (is_object($v) && method_exists($v, 'toArray')) {
+					$data[$k] = $v->toArray();
+				}
+			}
+			
+			return $data;
+		}
+		
+		final private function fieldFillCheck(array $data)
+		{
+			if (empty($this->allowFill) && empty($this->denyFill)) {
+				return;
+			}
+			//允许填充的数据
+			if (!empty($this->allowFill) && $this->allowFill[0] != '*') {
+				# $data = Arr::filterKeys($data, $this->allowFill, 0);
+			}
+			//禁止填充的数据
+			if (!empty($this->denyFill)) {
+				if ($this->denyFill[0] == '*') {
+					$data = [];
+				} else {
+					//TODO
+					# $data = Arr::filterKeys($data, $this->denyFill, 1);
+				}
+			}
+			$this->original = array_merge($this->original, $data);
+		}
+		
+		/**
+		 * 批量设置做准备数据
+		 *
+		 * @return $this
+		 */
+		private function formatFields()
+		{
+			//更新时设置
+			if ($this->action() == self::MODEL_UPDATE) {
+				$this->original[$this->pk] = $this->data[$this->pk];
+			}
+			//字段时间
+			if ($this->timestamps === true) {
+				$this->original['updated_at'] = Carbon::now(new \DateTimeZone('PRC'));
+				//更新时间设置
+				if ($this->action() == self::MODEL_INSERT) {
+					$this->original['created_at'] = Carbon::now(new \DateTimeZone('PRC'));
+				}
+			}
+			
+			return $this;
+		}
+		
+		public function action()
+		{
+			return empty($this->data[$this->pk]) ? self::MODEL_INSERT : self::MODEL_UPDATE;
+		}
+		
+		public function touch()
+		{
+			if ($this->action() == self::MODEL_UPDATE && $this->timestamps) {
+				$data = ['updated_at' => Carbon::now('PRC')];
+				
+				return $this->db->where($this->pk, $this->data[$this->pk])->update($data);
+			}
+			
+			return false;
+		}
+		
+		public function getTable()
+		{
+			return $this->table;
+		}
+		
+		public function save(array $data = [])
+		{
+			//自动填充数据处理
+			$this->fieldFillCheck($data);
+			//自动过滤
+			$this->autoFilter();
+			//自动完成
+			$this->autoOperation();
+			//处理时期字段
+			$this->formatFields();
+			if ($this->action() == self::MODEL_UPDATE) {
+				$this->original = array_merge($this->data, $this->original);
+			}
+			//自动验证
+			if (!$this->autoValidate()) {
+				return false;
+			}
+			//更新条件检测
+			$res = null;
+			switch ($this->action()) {
+				case self::MODEL_UPDATE:
+					if ($res = $this->db->update($this->original)) {
+						$this->setData($this->db->find($this->data[$this->pk]));
+					}
+					break;
+				case self::MODEL_INSERT:
+					if ($res = $this->db->insertGetId($this->original)) {
+						if (is_numeric($res) && $this->pk) {
+							$this->setData($this->db->find($res));
+						}
+					}
+					break;
+			}
+			$this->original = [];
+			
+			return $res ? $this : false;
+		}
+		
+		
+		static public function findOrCreate($id = 0)
+		{
+			$model = !empty($id) && is_numeric($id) ? static::find($id) : new static();
+			if (empty($model)) {
+				return new static();
+			}
+			
+			return $model;
+		}
+		
+		public function destory()
+		{
+			//没有查询参数如果模型数据中存在主键值,以主键值做删除条件
+			if (!empty($this->data[$this->pk])) {
+				if ($this->db->delete($this->data[$this->pk])) {
+					$this->setData([]);
+					
+					return true;
+				}
+			}
+			
+			return false;
+		}
+		
+		public function __set($name, $value)
+		{
+			$this->original[$name] = $value;
+			$this->data[$name] = $value;
+		}
+		
+		public function __get($name)
+		{
+			if (isset($this->fields[$name])) {
+				return $this->fields[$name];
+			}
+			//关键方法获取
+			if (method_exists($this, $name)) {
+				return $this->$name();
 			}
 		}
 		

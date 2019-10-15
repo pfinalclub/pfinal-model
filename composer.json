@@ -35,10 +35,12 @@
     }
   },
   "require-dev": {
-    "phpunit/phpunit": "6.2"
+    "phpunit/phpunit": "7.2.*"
   },
   "require": {
     "nancheng/pfinal-config": "dev-master",
-    "nancheng/pfinal-db": "dev-master"
+    "nancheng/pfinal-db": "dev-master",
+    "nancheng/pfinal-collection": "dev-master",
+    "nesbot/carbon": "2.25.2"
   }
 }
