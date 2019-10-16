@@ -25,11 +25,13 @@
 	use pf\db\Query;
 	use pf\model\build\ArrayIterator;
 	use pf\model\build\Auto;
+	use pf\model\build\Filter;
 	use pf\model\build\Relation;
+	use pf\model\build\Validate;
 	
 	class Model implements ArrayAccess, Iterator
 	{
-		use ArrayIterator, Relation,Auto;
+		use ArrayIterator, Relation, Auto, Filter,Validate;
 		
 		# use Validate, Auto, Filter;
 		
